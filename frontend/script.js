@@ -23,6 +23,8 @@ const MAX_RETRIES = 3;
 let mapRetryInterval = null;
 let lastSavedPosition = null;
 let locationsSaved = 0; // Counter for saved locations
+let lastLocationUpdate = null; // Track when we last got a location update
+let trackingHeartbeat = null; // Heartbeat to monitor tracking health
 
 // Simplify base API URL detection
 const getBaseApiUrl = () => {
@@ -103,6 +105,9 @@ function updateLocationUI(position) {
     accuracy,
     timestamp: new Date().toISOString(),
   };
+
+  // Update last location timestamp for heartbeat monitoring
+  lastLocationUpdate = Date.now();
 
   // Check if this is a significant location change (> 5 meters or first position)
   let shouldSave = false;
@@ -274,7 +279,7 @@ function startTracking() {
       }
     );
 
-    // Start watching position
+    // Start watching position with more resilient settings
     watchId = navigator.geolocation.watchPosition(
       (position) => {
         updateLocationUI(position);
@@ -284,8 +289,8 @@ function startTracking() {
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
+        timeout: 15000, // Longer timeout for better reliability
+        maximumAge: 30000, // Allow 30-second old positions to avoid constant timeouts
       }
     );
 
@@ -302,11 +307,51 @@ function startTracking() {
           saveLocation({ coords: currentPosition });
         }
       }
+
+      // Health check: ensure watchId is still active
+      if (isTracking && watchId === null) {
+        console.log("Health check: Location tracking lost, restarting...");
+        restartLocationTracking();
+      }
     }, UPDATE_INTERVAL);
+
+    // Start heartbeat monitoring to detect when tracking stops working
+    startTrackingHeartbeat();
   } catch (error) {
     showError("Failed to start location tracking: " + error.message);
     stopTracking();
   }
+}
+
+// Start heartbeat monitoring for location tracking
+function startTrackingHeartbeat() {
+  if (trackingHeartbeat) {
+    clearInterval(trackingHeartbeat);
+  }
+
+  trackingHeartbeat = setInterval(() => {
+    if (!isTracking) return; // Don't monitor if not tracking
+
+    const now = Date.now();
+    const timeSinceLastUpdate = now - (lastLocationUpdate || now);
+
+    // If no location update in 2 minutes, something is wrong
+    if (timeSinceLastUpdate > 120000) {
+      // 2 minutes
+      console.log(
+        "Location tracking appears to have stopped, attempting restart..."
+      );
+
+      // Try to restart location tracking
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+
+      restartLocationTracking();
+      lastLocationUpdate = now; // Reset timer
+    }
+  }, 30000); // Check every 30 seconds
 }
 
 // Stop tracking location
@@ -321,6 +366,11 @@ function stopTracking() {
     locationUpdateInterval = null;
   }
 
+  if (trackingHeartbeat !== null) {
+    clearInterval(trackingHeartbeat);
+    trackingHeartbeat = null;
+  }
+
   isTracking = false;
   localStorage.setItem("isTracking", "false");
   updateButtonStates();
@@ -328,36 +378,90 @@ function stopTracking() {
   statusIndicator.classList.remove("online");
   statusIndicator.classList.add("offline");
   statusText.textContent = "Offline - Not Tracking";
+
+  console.log("Location tracking stopped by user");
 }
 
 // Handle geolocation errors
 function handleGeolocationError(error) {
   let errorMessage;
+  let shouldStopTracking = false;
 
   switch (error.code) {
     case error.PERMISSION_DENIED:
       errorMessage =
         "You denied the request for geolocation. Please enable location services in your browser settings and refresh the page.";
+      shouldStopTracking = true; // Only stop for permission denied
       break;
     case error.POSITION_UNAVAILABLE:
       errorMessage =
-        "Location information is unavailable. Please check your device settings or try moving to a location with better GPS signal.";
+        "GPS signal temporarily unavailable. Trying to reconnect...";
+      // Don't stop tracking, keep trying
+      setTimeout(() => {
+        if (isTracking && watchId === null) {
+          console.log(
+            "Attempting to restart location tracking after GPS signal loss"
+          );
+          restartLocationTracking();
+        }
+      }, 5000); // Retry after 5 seconds
       break;
     case error.TIMEOUT:
-      errorMessage =
-        "The request to get user location timed out. Please try again or check your internet connection.";
+      errorMessage = "Location request timed out. Continuing to track...";
+      // Don't stop tracking, timeout is normal on some devices
       break;
     default:
-      errorMessage =
-        "An unknown error occurred while tracking location. Please refresh the page and try again.";
+      errorMessage = "Location service error. Continuing to track...";
       break;
   }
 
-  showError(errorMessage);
-
-  // Don't immediately stop tracking on timeout or position unavailable
+  // Only show error for critical issues, not temporary ones
   if (error.code === error.PERMISSION_DENIED) {
+    showError(errorMessage);
+  } else {
+    console.log("Geolocation warning:", errorMessage);
+  }
+
+  // Only stop tracking for permission denied
+  if (shouldStopTracking) {
     stopTracking();
+  }
+}
+
+// Restart location tracking (for recovery from errors)
+function restartLocationTracking() {
+  if (!isTracking) return; // Don't restart if user stopped tracking
+
+  console.log("Restarting location tracking...");
+
+  // Clear existing watch if any
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+
+  // Start watching position again
+  try {
+    watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        updateLocationUI(position);
+      },
+      (error) => {
+        handleGeolocationError(error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000, // Longer timeout for unstable connections
+        maximumAge: 30000, // Allow 30-second old positions
+      }
+    );
+    console.log("Location tracking restarted successfully");
+  } catch (error) {
+    console.error("Failed to restart location tracking:", error);
+    // Try again in 10 seconds
+    setTimeout(() => {
+      if (isTracking) restartLocationTracking();
+    }, 10000);
   }
 }
 
@@ -539,13 +643,25 @@ document.addEventListener("DOMContentLoaded", async () => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     // Page is now visible to the user
+    console.log("Page became visible, checking tracking status");
+
     // Update button states to match current tracking status
     updateButtonStates();
 
+    // Check if we should be tracking based on localStorage
+    const storedTrackingState = localStorage.getItem("isTracking");
+    if (storedTrackingState === "true" && !isTracking) {
+      isTracking = true;
+    }
+
     if (isTracking && watchId === null) {
       // Restart tracking if it was running before
-      startTracking();
+      console.log("Restarting tracking after page became visible");
+      restartLocationTracking();
     }
+  } else {
+    // Page is hidden, but don't stop tracking
+    console.log("Page became hidden, continuing tracking in background");
   }
 });
 
@@ -556,7 +672,6 @@ window.addEventListener("online", () => {
 });
 
 window.addEventListener("offline", () => {
-  console.log("Internet connection lost");
   // We can still track locally even when offline
   showError(
     "Internet connection lost. Location tracking continues but data is not being saved to the server."

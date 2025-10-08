@@ -10,7 +10,7 @@ mongoose
   .connect(MONGODB_URI, {
     serverSelectionTimeoutMS: 10000, // Timeout for server selection
     socketTimeoutMS: 45000, // How long a socket stays inactive before closing
-    family: 4, // Use IPv4, skip trying IPv6
+    family: 4, // Perfect for Atlas
   })
   .then(() => {
     console.log("Connected to MongoDB successfully");
