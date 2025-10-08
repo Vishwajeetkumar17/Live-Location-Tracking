@@ -98,6 +98,7 @@
         let liveMap = null;
         let userMarkers = {};
         let autoRefreshInterval = null;
+        let locationTrackingCheckInterval = null;
 
         // Authentication functions
         async function autoLogin() {
@@ -149,6 +150,40 @@
             } catch (error) {
                 console.error('Map error:', error.message);
                 return false;
+            }
+        }
+
+        // Ensure location tracking stays active on live-tracking page
+        function startLocationTrackingCheck() {
+            // Clear any existing interval
+            if (locationTrackingCheckInterval) {
+                clearInterval(locationTrackingCheckInterval);
+            }
+
+            // Check every 10 seconds if location tracking is active
+            locationTrackingCheckInterval = setInterval(() => {
+                const storedTrackingState = localStorage.getItem("isTracking");
+
+                // If tracking should be active but isn't running
+                if (storedTrackingState === "true" && typeof isTracking !== 'undefined' && !isTracking) {
+                    console.log('Location tracking stopped on live-tracking page, restarting...');
+                    if (typeof startTracking === 'function') {
+                        startTracking();
+                    }
+                }
+
+                // If no stored state but we want to track, start it
+                if (!storedTrackingState && typeof startTracking === 'function') {
+                    console.log('No tracking state found, starting location tracking');
+                    startTracking();
+                }
+            }, 10000); // Check every 10 seconds
+        }
+
+        function stopLocationTrackingCheck() {
+            if (locationTrackingCheckInterval) {
+                clearInterval(locationTrackingCheckInterval);
+                locationTrackingCheckInterval = null;
             }
         }
 
@@ -370,11 +405,19 @@
         document.addEventListener('DOMContentLoaded', function () {
             // Check authentication
             const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = 'login.html';
+                return;
+            }
 
             // Setup event listeners
             document.getElementById('refresh-btn').addEventListener('click', loadLiveLocations);
 
             document.getElementById('logout-btn').addEventListener('click', function () {
+                // Stop location tracking before logout
+                if (typeof stopTracking === 'function') {
+                    stopTracking();
+                }
                 localStorage.removeItem('token');
                 window.location.href = 'login.html';
             });
@@ -398,12 +441,48 @@
                 initializeMap();
                 loadLiveLocations();
                 startAutoRefresh();
+
+                // Start location tracking so user appears in live tracking
+                if (typeof startTracking === 'function') {
+                    console.log('Starting location tracking on live-tracking page');
+                    startTracking();
+                }
+
+                // Start periodic check to ensure location tracking stays active
+                startLocationTrackingCheck();
             }, 500);
+        });
+
+        // Handle page visibility changes to maintain location tracking
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') {
+                console.log('Live tracking page became visible, ensuring location tracking');
+
+                // Ensure location tracking is active when page becomes visible
+                const storedTrackingState = localStorage.getItem("isTracking");
+                if (storedTrackingState === "true" && typeof startTracking === 'function') {
+                    // Check if tracking is actually running
+                    if (typeof isTracking !== 'undefined' && !isTracking) {
+                        console.log('Restarting location tracking on live-tracking page');
+                        startTracking();
+                    }
+                }
+
+                // Restart the periodic tracking check when page becomes visible
+                startLocationTrackingCheck();
+            } else {
+                // Page is hidden - stop the tracking check to save resources
+                // but keep location tracking running
+                console.log('Live tracking page became hidden, stopping tracking check');
+                stopLocationTrackingCheck();
+            }
         });
 
         // Cleanup
         window.addEventListener('beforeunload', function () {
             stopAutoRefresh();
+            // Don't stop location tracking on page unload - let it continue
+            // so user stays visible in live tracking when navigating between pages
         });
     </script>
 
