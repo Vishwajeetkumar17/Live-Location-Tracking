@@ -37,7 +37,7 @@ cd live-location-tracking
 2. **Install dependencies**
 
 ```bash
-npm install
+pnpm install
 ```
 
 3. **Set up environment variables**
@@ -82,54 +82,3 @@ If you encounter issues, use the built-in debug tool:
 2. Check the server status and API connections
 3. Test registration and login functionality
 4. View detailed error messages and environment information
-
-### Common Issues and Solutions
-
-#### 1. "Unexpected token '<', "<!DOCTYPE "... is not valid JSON"
-
-This error occurs when the API is returning HTML instead of JSON. Possible causes:
-
-- The API endpoint doesn't exist
-- The server isn't running
-- There's a network or CORS issue
-
-**Solution**: 
-- Use the debug tool to test the API endpoints
-- Check the server console for errors
-- Ensure the correct API base URL is being used
-
-#### 2. Maps Not Loading
-
-If the map doesn't load but your location coordinates appear:
-
-- Check your internet connection
-- Verify that OpenStreetMap isn't blocked on your network
-- Look for console errors related to Leaflet
-
-#### 3. Location Not Updating
-
-If your location isn't being tracked:
-
-- Ensure you've granted location permissions in your browser
-- Check that the "Start Tracking" button has been clicked
-- Verify your device has GPS capabilities
-
-## API Endpoints
-
-### Authentication
-
-- `POST /api/register` - Register a new user
-- `POST /api/login` - Login with email and password
-
-### Location
-
-- `POST /api/location` - Save current location (requires authentication)
-- `GET /api/locations` - Get location history (requires authentication)
-
-### System
-
-- `GET /api/health` - Check if server is running
-
-## License
-
-This project is licensed under the MIT License.
